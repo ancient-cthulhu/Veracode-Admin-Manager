@@ -1,0 +1,2 @@
+requests
+veracode-api-signing
