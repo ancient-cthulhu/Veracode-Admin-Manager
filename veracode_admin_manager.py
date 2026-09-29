@@ -185,9 +185,8 @@ class VeracodeAdminClient:
     def __enter__(self) -> "VeracodeAdminClient":
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.close()
-        return False
 
     def close(self) -> None:
         self.session.close()
@@ -355,9 +354,11 @@ class VeracodeAdminClient:
 
     def whoami(self) -> Dict:
         """Return the user or API account that owns the credentials."""
-        if self._self_user is None:
-            self._self_user = self.request("GET", "/users/self")
-        return self._self_user
+        user = self._self_user
+        if user is None:
+            user = self.request("GET", "/users/self")
+            self._self_user = user
+        return user
 
     def whoami_id(self) -> str:
         try:
@@ -562,9 +563,12 @@ def users_modify(
 
     Teams and roles are sent as the complete resulting list with partial=true.
     """
+    if action in {"add-team", "remove-team", "add-role", "remove-role"} and not value:
+        raise ValueError(f"users {action} requires a team or role value.")
+    key: str = value or ""
     me = c.whoami_id() if action in SELF_PROTECTED_ACTIONS else ""
     op = f"user-{action}"
-    label = value_label or value or ""
+    label = value_label or key
     results = []
 
     for i, summary in enumerate(rows, 1):
@@ -594,29 +598,29 @@ def users_modify(
             elif action in {"add-team", "remove-team"}:
                 teams = {str(val(x, "team_id")): {"team_id": val(x, "team_id")} for x in user.get("teams", []) or []}
                 if action == "add-team":
-                    if value in teams:
+                    if key in teams:
                         results.append(Result(op, name, "skipped", f"already a member of {label}"))
                         continue
-                    teams[value] = {"team_id": value}
+                    teams[key] = {"team_id": key}
                 else:
-                    if value not in teams:
+                    if key not in teams:
                         results.append(Result(op, name, "skipped", f"not a member of {label}"))
                         continue
-                    teams.pop(value)
+                    teams.pop(key)
                 payload["teams"] = list(teams.values())
 
             elif action in {"add-role", "remove-role"}:
                 roles = {str(val(x, "role_name")): {"role_name": val(x, "role_name")} for x in user.get("roles", []) or []}
                 if action == "add-role":
-                    if value in roles:
-                        results.append(Result(op, name, "skipped", f"already has {value}"))
+                    if key in roles:
+                        results.append(Result(op, name, "skipped", f"already has {key}"))
                         continue
-                    roles[value] = {"role_name": value}
+                    roles[key] = {"role_name": key}
                 else:
-                    if value not in roles:
-                        results.append(Result(op, name, "skipped", f"does not have {value}"))
+                    if key not in roles:
+                        results.append(Result(op, name, "skipped", f"does not have {key}"))
                         continue
-                    roles.pop(value)
+                    roles.pop(key)
                 errors = validate_roles(roles)
                 if errors:
                     raise ValueError("; ".join(errors))
@@ -1643,7 +1647,7 @@ def bu_menu(s: Session) -> None:
                 continue
             tids = [row_id(t) for t in selected]
 
-            if choice == 5:
+            if source is not None:
                 title = f"Teams to MOVE: {row_name(source)} -> {row_name(target)}"
             elif choice == 4:
                 title = f"Teams to REMOVE from {row_name(target)}"
@@ -1654,7 +1658,7 @@ def bu_menu(s: Session) -> None:
                 s.cancelled()
                 continue
 
-            if choice == 5:
+            if source is not None:
                 s.finish(bu_move(c, bu_id(source), bu_id(target), tids, row_name(source), row_name(target)))
             else:
                 s.finish(bu_assign(c, bu_id(target), tids, remove=choice == 4, bu_label=row_name(target)))
